@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スクラッチ風ペイントエディタ</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+        }
+        h1 {
+            color: #4c3e99;
+            font-size: 20px;
+            margin-bottom: 15px;
+        }
+        /* メインの作業画面（横にならべる） */
+        .editor-container {
+            display: flex;
+            gap: 15px;
+            background: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+        }
+        /* スクラッチ風の左側ツールバー */
+        .toolbar {
+            display: grid;
+            grid-template-columns: repeat(2, 45px);
+            grid-gap: 12px;
+            align-content: start;
+        }
+        /* ツールボタンの見た目（スクラッチ再現） */
+        .tool-btn {
+            width: 45px;
+            height: 45px;
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.1s;
+        }
+        .tool-btn:hover {
+            background-color: #f0f0f0;
+        }
+        /* えらばれているボタン（スクラッチの紫） */
+        .tool-btn.active {
+            background-color: #855cd6;
+            color: white;
+            border-color: #855cd6;
+        }
+        /* 右側のキャンバスエリア */
+        .canvas-area {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        /* 上の設定バー（色、太さ、ボタンなど） */
+        .top-bar {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            background: #f0f4f8;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        canvas {
+            background-color: white;
+            border: 1px solid #d0d0d0;
+            border-radius: 4px;
+            cursor: crosshair;
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
+        }
+        input[type="number"] {
+            width: 45px;
+            padding: 4px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            text-align: center;
+        }
+        /* アクションボタンの共通デザイン */
+        .action-btn {
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        /* ダウンロードボタン（緑色） */
+        .download-btn {
+            background-color: #4cab52;
+            color: white;
+            margin-left: auto; /* 右側に寄せる */
+        }
+        .download-btn:hover {
+            background-color: #3e8e41;
+        }
+        /* ゴミ箱ボタン（赤色） */
+        .clear-btn {
+            background-color: #ff4d4d;
+            color: white;
+        }
+        .clear-btn:hover {
+            background-color: #e60000;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎨 スクラッチ風ペイントエディタ</h1>
+
+    <div class="editor-container">
+        <!-- 左側：ツールバー -->
+        <div class="toolbar">
+            <button class="tool-btn active" id="select" title="選択">↖️</button>
+            <button class="tool-btn" id="reshape" title="形を変える">⬈</button>
+            <button class="tool-btn" id="brush" title="筆">🖌️</button>
+            <button class="tool-btn" id="eraser" title="消しゴム">🧼</button>
+            <button class="tool-btn" id="bucket" title="塗りつぶし">🪣</button>
+            <button class="tool-btn" id="text" title="テキスト">Ｔ</button>
+            <button class="tool-btn" id="line" title="直線">╱</button>
+            <button class="tool-btn" id="circle" title="円">◯</button>
+            <button class="tool-btn" id="rect" title="長方形">⬜</button>
+        </div>
+
+        <!-- 右側：設定とキャンバス -->
+        <div class="canvas-area">
+            <div class="top-bar">
+                <label>色: <input type="color" id="colorPicker" value="#855cd6"></label>
+                <label>太さ: <input type="number" id="lineWidth" min="1" max="100" value="8"></label>
+                
+                <!-- ダウンロードボタンと全部消すボタン -->
+                <button class="action-btn download-btn" id="downloadBtn">💾 画像を保存</button>
+                <button class="action-btn clear-btn" id="clearBtn">🗑️ 全部消す</button>
+            </div>
+            <canvas id="paintCanvas" width="500" height="350"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('paintCanvas');
+        const ctx = canvas.getContext('2d');
+        const colorPicker = document.getElementById('colorPicker');
+        const lineWidth = document.getElementById('lineWidth');
+        const clearBtn = document.getElementById('clearBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const buttons = document.querySelectorAll('.tool-btn');
+
+        let drawing = false;
+        let currentMode = 'select';
+        let startX, startY;
+        let snapshot;
+
+        // ボタンの切り替えイベント
+        buttons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                buttons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentMode = btn.id;
+            });
+        });
+
+        // マウスを押したとき
+        function startDrawing(e) {
+            drawing = true;
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+
+            snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            if (currentMode === 'brush' || currentMode === 'eraser') {
+                draw(e);
+            }
+        }
+
+        // マウスを動かしているとき
+        function draw(e) {
+            if (!drawing) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+
+            ctx.lineWidth = lineWidth.value;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            if (currentMode === 'brush') {
+                ctx.strokeStyle = colorPicker.value;
+                ctx.lineTo(currentX, currentY);
+                ctx.stroke();
+            } 
+            else if (currentMode === 'eraser') {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineTo(currentX, currentY);
+                ctx.stroke();
+            } 
+            else if (currentMode === 'line') {
+                ctx.putImageData(snapshot, 0, 0);
+                ctx.strokeStyle = colorPicker.value;
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(currentX, currentY);
+                ctx.stroke();
+            } 
+            else if (currentMode === 'rect') {
+                ctx.putImageData(snapshot, 0, 0);
+                ctx.strokeStyle = colorPicker.value;
+                ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+            } 
+            else if (currentMode === 'circle') {
+                ctx.putImageData(snapshot, 0, 0);
+                ctx.strokeStyle = colorPicker.value;
+                ctx.beginPath();
+                let radius = Math.sqrt(Math.pow(currentX - startX, 2) + Math.pow(currentY - startY, 2));
+                ctx.arc(startX, startY, radius, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+        }
+
+        // マウスを離したとき
+        function stopDrawing(e) {
+            if (!drawing) return;
+            drawing = false;
+            const rect = canvas.getBoundingClientRect();
+            const endX = e.clientX - rect.left;
+            const endY = e.clientY - rect.top;
+
+            if (currentMode === 'bucket') {
+                ctx.fillStyle = colorPicker.value;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            else if (currentMode === 'text') {
+                let text = prompt("いれたい文字を入力してね：");
+                if (text) {
+                    ctx.fillStyle = colorPicker.value;
+                    ctx.font = `${lineWidth.value * 3}px sans-serif`;
+                    ctx.fillText(text, endX, endY);
+                }
+            }
+            else if (currentMode === 'select' || currentMode === 'reshape') {
+                alert(`「${currentMode === 'select' ? '選択' : '形を変える'}」モードが選ばれたよ！`);
+            }
+
+            ctx.beginPath();
+        }
+
+        // マウスのイベント登録
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        window.addEventListener('mouseup', stopDrawing);
+
+        // ゴミ箱ボタン
+        clearBtn.addEventListener('click', () => {
+            if (confirm('ぜんぶ消しちゃって大丈夫？')) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        });
+
+        // 💾 ダウンロードボタンの処理
+        downloadBtn.addEventListener('click', () => {
+            // キャンバスの絵をデータに変換する
+            const imageURI = canvas.toDataURL('image/png');
+            
+            // 勝手にダウンロードリンクを作ってクリックさせるプロの技！
+            const link = document.createElement('a');
+            link.download = 'my_scratch_picture.png'; // 保存するファイルの名前
+            link.href = imageURI;
+            link.click();
+        });
+    </script>
+
+</body>
+</html>
