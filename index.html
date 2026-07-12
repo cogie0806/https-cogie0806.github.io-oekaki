@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>みんなのスクラッチ風ペイントエディタ</title>
+    <title>画像編集ペイントエディタ</title>
     <style>
         body {
             font-family: sans-serif;
@@ -15,7 +15,6 @@
             align-items: center;
             user-select: none;
             -webkit-user-select: none;
-            /* どのスマホでも画面全体のスクロールや引っ張りを完全に禁止する */
             touch-action: none;
             overflow: hidden;
             width: 100vw;
@@ -72,13 +71,13 @@
             padding: 6px 10px;
             border-radius: 6px;
             font-size: 12px;
+            flex-wrap: wrap;
         }
         canvas {
             background-color: white;
             border: 1px solid #d0d0d0;
             border-radius: 4px;
             box-shadow: inset 0 2px 5px rgba(0,0,0,0.05);
-            /* おばあちゃんの古いAndroidでも指の邪魔をさせない設定 */
             touch-action: none !important;
         }
         input[type="number"] {
@@ -96,6 +95,15 @@
             font-weight: bold;
             font-size: 11px;
         }
+        .upload-label {
+            background-color: #ff9800;
+            color: white;
+            padding: 5px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 11px;
+            cursor: pointer;
+        }
         .download-btn {
             background-color: #4cab52;
             color: white;
@@ -104,11 +112,14 @@
             background-color: #ff4d4d;
             color: white;
         }
+        #imageUpload {
+            display: none;
+        }
     </style>
 </head>
 <body>
 
-    <h1>🎨 スクラッチ風ペイントエディタ</h1>
+    <h1>🎨 画像編集ペイントエディタ</h1>
 
     <div class="editor-container">
         <div class="toolbar">
@@ -125,16 +136,17 @@
 
         <div class="canvas-area">
             <div class="top-bar">
+                <label class="upload-label" for="imageUpload">📂 画像をひらく</label>
+                <input type="file" id="imageUpload" accept="image/*">
+
                 <label>色: <input type="color" id="colorPicker" value="#855cd6"></label>
                 <label>太さ: <input type="number" id="lineWidth" min="1" max="100" value="8"></label>
                 <button class="action-btn download-btn" id="downloadBtn">💾 保存</button>
                 <button class="action-btn clear-btn" id="clearBtn">🗑️ 消す</button>
             </div>
-            <!-- どんなスマホの画面幅でもピッタリ収まるサイズ -->
             <canvas id="paintCanvas" width="300" height="300"></canvas>
         </div>
     </div>
-
     <script>
         const canvas = document.getElementById('paintCanvas');
         const ctx = canvas.getContext('2d');
@@ -142,6 +154,7 @@
         const lineWidth = document.getElementById('lineWidth');
         const clearBtn = document.getElementById('clearBtn');
         const downloadBtn = document.getElementById('downloadBtn');
+        const imageUpload = document.getElementById('imageUpload');
         const buttons = document.querySelectorAll('.tool-btn');
 
         let drawing = false;
@@ -157,7 +170,26 @@
             });
         });
 
-        // ⭐ 最新のプログラミング技（PointerEvents）で、マウスも指も一発で正確に計算する
+        // 📸 画像をえらんだときのプログラム
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+                    const x = (canvas.width / 2) - (img.width / 2) * scale;
+                    const y = (canvas.height / 2) - (img.height / 2) * scale;
+                    ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
         function getCanvasPos(e) {
             const rect = canvas.getBoundingClientRect();
             return {
@@ -166,10 +198,10 @@
             };
         }
 
-        // 🚀 指を置いた・マウスを押したとき（どんなAndroidでも100%反応するよ！）
+        // 🚀 タッチ・マウスを押したとき
         canvas.addEventListener('pointerdown', (e) => {
             e.preventDefault();
-            canvas.setPointerCapture(e.pointerId); // 指のうごきをキャンバスにロックする
+            canvas.setPointerCapture(e.pointerId);
             drawing = true;
             
             const pos = getCanvasPos(e);
@@ -185,7 +217,7 @@
             }
         });
 
-        // 🚀 指をうごかしたとき
+        // 🚀 動かしているとき
         canvas.addEventListener('pointermove', (e) => {
             e.preventDefault();
             if (!drawing) return;
@@ -193,7 +225,7 @@
             handleDrawMove(pos.x, pos.y);
         });
 
-        // 🚀 指をはなしたとき
+        // 🚀 はなしたとき
         canvas.addEventListener('pointerup', (e) => {
             e.preventDefault();
             if (!drawing) return;
@@ -202,7 +234,6 @@
             handleDrawEnd();
         });
 
-        // 🎨 描く・消すの共通プログラム
         function handleDrawMove(currentX, currentY) {
             ctx.lineWidth = lineWidth.value;
             ctx.lineCap = 'round';
@@ -214,7 +245,7 @@
                 ctx.stroke();
             } 
             else if (currentMode === 'eraser') {
-                ctx.strokeStyle = '#ffffff'; // 白で消す
+                ctx.strokeStyle = '#ffffff';
                 ctx.lineTo(currentX, currentY);
                 ctx.stroke();
             } 
@@ -241,7 +272,6 @@
             }
         }
 
-        // はなしたときのアクション
         function handleDrawEnd() {
             if (currentMode === 'bucket') {
                 ctx.fillStyle = colorPicker.value;
@@ -258,18 +288,16 @@
             ctx.beginPath();
         }
 
-        // 消す
         clearBtn.addEventListener('click', () => {
             if (confirm('ぜんぶ消しちゃって大丈夫？')) {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
             }
         });
 
-        // 保存
         downloadBtn.addEventListener('click', () => {
             const imageURI = canvas.toDataURL('image/png');
             const link = document.createElement('a');
-            link.download = 'scratch_picture.png';
+            link.download = 'edited_picture.png';
             link.href = imageURI;
             link.click();
         });
