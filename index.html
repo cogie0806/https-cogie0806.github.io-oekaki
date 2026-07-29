@@ -118,7 +118,7 @@ input[type="number"] { width: 35px; }
 <div class="editor-container">
   <div class="toolbar">
     <button class="tool-btn active" id="select" title="選択">↖️</button>
-    <button class="tool-btn" id="reshape" title="形を変える">⬈</button>
+    <button class="tool-btn" id="reshape" title="形を変える（長方形/正方形）">⬈</button>
     <button class="tool-btn" id="brush" title="筆">🖌️</button>
     <button class="tool-btn" id="eraser" title="消しゴム">🧼</button>
     <button class="tool-btn" id="bucket" title="塗りつぶし">🪣</button>
@@ -154,7 +154,7 @@ input[type="number"] { width: 35px; }
 </div>
 
 <script>
-// 次の返信で、ここから続くJavaScriptの処理をお送りします。
+// 次の返信で、変数定義と変形ツール用の特殊なデータ変数の定義をお送りします。
 const canvas = document.getElementById('paintCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const colorPicker = document.getElementById('colorPicker');
@@ -172,25 +172,35 @@ let currentMode = 'select';
 let startX, startY;
 let snapshot;
 
-// 履歴管理用のスタック（最大20個まで保存）
+// 履歴管理
 let undoStack = [];
 let redoStack = [];
 const MAX_HISTORY = 20;
 
+// 変形ツール（reshape）用の変数
+let transformState = {
+  isSelecting: false, // 範囲を選択中か
+  isTransforming: false, // 変形中（移動・拡大縮小）か
+  activeHandle: null, // 動かしている四隅のノブ ('nw', 'ne', 'se', 'sw', 'move')
+  x: 0, y: 0, w: 0, h: 0, // 選択範囲の座標とサイズ
+  selectedPixels: null, // 切り取った画像データ（一時保存用）
+  baseSnapshot: null // 切り取る前のキャンバス状態
+};
+
+const HANDLE_SIZE = 8; // 変形ノブのサイズ
+
 function saveHistory() {
-  if (undoStack.length >= MAX_HISTORY) {
-    undoStack.shift();
-  }
+  if (undoStack.length >= MAX_HISTORY) undoStack.shift();
   undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-  redoStack = []; // 新しい操作をしたら進む履歴はクリア
+  redoStack = [];
   updateHistoryButtons();
 }
 
 function undo() {
   if (undoStack.length > 0) {
     redoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    const previous = undoStack.pop();
-    ctx.putImageData(previous, 0, 0);
+    ctx.putImageData(undoStack.pop(), 0, 0);
+    resetTransform();
     updateHistoryButtons();
   }
 }
@@ -198,8 +208,8 @@ function undo() {
 function redo() {
   if (redoStack.length > 0) {
     undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
-    const next = redoStack.pop();
-    ctx.putImageData(next, 0, 0);
+    ctx.putImageData(redoStack.pop(), 0, 0);
+    resetTransform();
     updateHistoryButtons();
   }
 }
@@ -209,65 +219,94 @@ function updateHistoryButtons() {
   redoBtn.disabled = redoStack.length === 0;
 }
 
-// 初期ボタン状態
 updateHistoryButtons();
 
-// ショートカットキーの設定 (Ctrl+Z, Ctrl+Y / MacはCmdキー対応)
 window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-    e.preventDefault();
-    undo();
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
-    e.preventDefault();
-    redo();
-  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
 });
 
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
-// 画質（解像度）の変更処理
+// 変形モードの初期化
+function resetTransform() {
+  if (transformState.isTransforming || transformState.isSelecting) {
+    ctx.putImageData(transformState.baseSnapshot, 0, 0);
+    drawTransformResult();
+  }
+  transformState = { isSelecting: false, isTransforming: false, activeHandle: null, x: 0, y: 0, w: 0, h: 0, selectedPixels: null, baseSnapshot: null };
+}
+
+// 変形結果をキャンバスに確定描画する
+function drawTransformResult() {
+  if (!transformState.selectedPixels) return;
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = transformState.selectedPixels.width;
+  tempCanvas.height = transformState.selectedPixels.height;
+  tempCanvas.getContext('2d').putImageData(transformState.selectedPixels, 0, 0);
+  ctx.drawImage(tempCanvas, transformState.x, transformState.y, transformState.w, transformState.h);
+}
+
+// 選択枠と四隅のノブ（ハンドル）を描画する
+function drawTransformOverlay() {
+  if (!transformState.isSelecting && !transformState.isTransforming) return;
+  
+  ctx.putImageData(transformState.baseSnapshot, 0, 0);
+  drawTransformResult();
+
+  ctx.save();
+  ctx.strokeStyle = '#2196f3';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(transformState.x, transformState.y, transformState.w, transformState.h);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#2196f3';
+  ctx.setLineDash([]);
+  const hs = HANDLE_SIZE;
+  const positions = [
+    { n: 'nw', x: transformState.x - hs/2, y: transformState.y - hs/2 },
+    { n: 'ne', x: transformState.x + transformState.w - hs/2, y: transformState.y - hs/2 },
+    { n: 'se', x: transformState.x + transformState.w - hs/2, y: transformState.y + transformState.h - hs/2 },
+    { n: 'sw', x: transformState.x - hs/2, y: transformState.y + transformState.h - hs/2 }
+  ];
+  positions.forEach(p => {
+    ctx.fillRect(p.x, p.y, hs, hs);
+    ctx.strokeRect(p.x, p.y, hs, hs);
+  });
+  ctx.restore();
+}
+
+// 画質変更処理
 canvasSizeSelect.addEventListener('change', (e) => {
   const newSize = parseInt(e.target.value);
-  
-  // 現在の描画内容を一時保存
   const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = canvas.width;
-  tempCanvas.height = canvas.height;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(canvas, 0, 0);
-
-  // キャンバスの内部解像度を変更（見た目のサイズはCSSで300pxに固定されています）
-  canvas.width = newSize;
-  canvas.height = newSize;
-
-  // 画像を新しい解像度に合わせて引き伸ばして再描画
+  tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
+  tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
+  resetTransform();
+  canvas.width = newSize; canvas.height = newSize;
   ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, newSize, newSize);
-  
-  // 履歴をリセットして現在の状態を保存
-  undoStack = [];
-  redoStack = [];
-  updateHistoryButtons();
+  undoStack = []; redoStack = []; updateHistoryButtons();
 });
 
-// ツールボタンの切り替え
+// モード切り替え
 buttons.forEach(btn => {
   btn.addEventListener('click', () => {
+    if (currentMode === 'reshape' && btn.id !== 'reshape') resetTransform();
     buttons.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentMode = btn.id;
   });
 });
 
-// 画像ファイルを開く処理
+// 画像読み込み
 imageUpload.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+  const file = e.target.files; if (!file) return;
   const reader = new FileReader();
   reader.onload = function(event) {
     const img = new Image();
     img.onload = function() {
-      saveHistory();
+      resetTransform(); saveHistory();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
       const x = (canvas.width / 2) - (img.width / 2) * scale;
@@ -279,7 +318,6 @@ imageUpload.addEventListener('change', (e) => {
   reader.readAsDataURL(file);
 });
 
-// 描画座標の取得処理（解像度との比率を計算）
 function getCanvasPos(e) {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -287,31 +325,92 @@ function getCanvasPos(e) {
     y: Math.floor((e.clientY - rect.top) * (canvas.height / rect.height))
   };
 }
-// マウス・タッチ操作のイベント設定
+// クリックした位置がノブ（ハンドル）の上か判定する
+function getActiveHandle(x, y) {
+  if (!transformState.isTransforming) return null;
+  const hs = HANDLE_SIZE;
+  const tx = transformState.x, ty = transformState.y, tw = transformState.w, th = transformState.h;
+  if (Math.abs(x - tx) <= hs && Math.abs(y - ty) <= hs) return 'nw';
+  if (Math.abs(x - (tx + tw)) <= hs && Math.abs(y - ty) <= hs) return 'ne';
+  if (Math.abs(x - (tx + tw)) <= hs && Math.abs(y - (ty + th)) <= hs) return 'se';
+  if (Math.abs(x - tx) <= hs && Math.abs(y - (ty + th)) <= hs) return 'sw';
+  if (x >= tx && x <= tx + tw && y >= ty && y <= ty + th) return 'move';
+  return null;
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
-  
-  saveHistory(); // 描画開始前に履歴を保存
-  
-  drawing = true;
   const pos = getCanvasPos(e);
-  startX = pos.x;
-  startY = pos.y;
-  
+  startX = pos.x; startY = pos.y;
+
+  if (currentMode === 'reshape') {
+    const handle = getActiveHandle(pos.x, pos.y);
+    if (handle) {
+      // 既存の選択範囲を動かす・引き伸ばすモード
+      transformState.activeHandle = handle;
+    } else {
+      // 新しく形（長方形・正方形）を囲んで選ぶモード
+      if (transformState.isTransforming) {
+        ctx.putImageData(transformState.baseSnapshot, 0, 0);
+        drawTransformResult();
+      }
+      saveHistory();
+      transformState.isSelecting = true;
+      transformState.isTransforming = false;
+      transformState.x = pos.x; transformState.y = pos.y;
+      transformState.w = 0; transformState.h = 0;
+      transformState.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    }
+    drawing = true;
+    return;
+  }
+
+  // 通常ツール用の描画開始処理
+  saveHistory();
+  drawing = true;
   ctx.beginPath();
   ctx.moveTo(startX, startY);
   snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  
-  if (currentMode === 'brush' || currentMode === 'eraser') {
-    handleDrawMove(pos.x, pos.y);
-  }
+  if (currentMode === 'brush' || currentMode === 'eraser') handleDrawMove(pos.x, pos.y);
 });
 
 canvas.addEventListener('pointermove', (e) => {
   e.preventDefault();
   if (!drawing) return;
   const pos = getCanvasPos(e);
+
+  if (currentMode === 'reshape') {
+    const ts = transformState;
+    if (ts.isSelecting) {
+      // ドラッグで囲む枠を広げる（Shiftキー不要で横・縦の長方形、Shiftキー押下で正方形に自動固定）
+      let dx = pos.x - startX;
+      let dy = pos.y - startY;
+      if (e.shiftKey) {
+        const size = Math.max(Math.abs(dx), Math.abs(dy));
+        dx = dx >= 0 ? size : -size;
+        dy = dy >= 0 ? size : -size;
+      }
+      ts.x = dx >= 0 ? startX : startX + dx;
+      ts.y = dy >= 0 ? startY : startY + dy;
+      ts.w = Math.abs(dx);
+      ts.h = Math.abs(dy);
+      drawTransformOverlay();
+    } else if (ts.isTransforming && ts.activeHandle) {
+      // ハンドルを掴んで中身を移動・引き伸ばす（伸縮）
+      const dx = pos.x - startX;
+      const dy = pos.y - startY;
+      if (ts.activeHandle === 'move') { ts.x += dx; ts.y += dy; }
+      else if (ts.activeHandle === 'nw') { ts.x += dx; ts.w -= dx; ts.y += dy; ts.h -= dy; }
+      else if (ts.activeHandle === 'ne') { ts.w += dx; ts.y += dy; ts.h -= dy; }
+      else if (ts.activeHandle === 'se') { ts.w += dx; ts.h += dy; }
+      else if (ts.activeHandle === 'sw') { ts.x += dx; ts.w -= dx; ts.h += dy; }
+      startX = pos.x; startY = pos.y;
+      drawTransformOverlay();
+    }
+    return;
+  }
+
   handleDrawMove(pos.x, pos.y);
 });
 
@@ -320,128 +419,75 @@ canvas.addEventListener('pointerup', (e) => {
   if (!drawing) return;
   drawing = false;
   canvas.releasePointerCapture(e.pointerId);
+
+  if (currentMode === 'reshape') {
+    const ts = transformState;
+    if (ts.isSelecting) {
+      if (ts.w > 2 && ts.h > 2) {
+        ts.isSelecting = false;
+        ts.isTransforming = true;
+        // 選んだ四角形（長方形・正方形）のピクセルデータをくり抜く
+        ts.selectedPixels = ctx.getImageData(ts.x, ts.y, ts.w, ts.h);
+        // 元の位置を白（背景色）でクリアする
+        ctx.putImageData(ts.baseSnapshot, 0, 0);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(ts.x, ts.y, ts.w, ts.h);
+        ts.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        drawTransformOverlay();
+      } else {
+        resetTransform();
+      }
+    } else if (ts.isTransforming) {
+      ts.activeHandle = null;
+      drawTransformOverlay();
+    }
+    return;
+  }
+
   handleDrawEnd();
 });
 
-// 動かしているときの描画処理
 function handleDrawMove(currentX, currentY) {
-  ctx.lineWidth = lineWidth.value;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  if (currentMode === 'brush') {
-    ctx.strokeStyle = colorPicker.value;
-    ctx.lineTo(currentX, currentY);
-    ctx.stroke();
-  } else if (currentMode === 'eraser') {
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineTo(currentX, currentY);
-    ctx.stroke();
-  } else if (currentMode === 'line') {
-    ctx.putImageData(snapshot, 0, 0);
-    ctx.strokeStyle = colorPicker.value;
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineTo(currentX, currentY);
-    ctx.stroke();
-  } else if (currentMode === 'rect') {
-    ctx.putImageData(snapshot, 0, 0);
-    ctx.strokeStyle = colorPicker.value;
-    ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
-  } else if (currentMode === 'circle') {
-    ctx.putImageData(snapshot, 0, 0);
-    ctx.strokeStyle = colorPicker.value;
-    ctx.beginPath();
-    let radius = Math.sqrt(Math.pow(currentX - startX, 2) + Math.pow(currentY - startY, 2));
-    ctx.arc(startX, startY, radius, 0, 2 * Math.PI);
-    ctx.stroke();
-  }
+  ctx.lineWidth = lineWidth.value; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (currentMode === 'brush') { ctx.strokeStyle = colorPicker.value; ctx.lineTo(currentX, currentY); ctx.stroke(); }
+  else if (currentMode === 'eraser') { ctx.strokeStyle = '#ffffff'; ctx.lineTo(currentX, currentY); ctx.stroke(); }
+  else if (currentMode === 'line') { ctx.putImageData(snapshot, 0, 0); ctx.strokeStyle = colorPicker.value; ctx.beginPath(); ctx.moveTo(startX, startY); ctx.lineTo(currentX, currentY); ctx.stroke(); }
+  else if (currentMode === 'rect') { ctx.putImageData(snapshot, 0, 0); ctx.strokeStyle = colorPicker.value; ctx.strokeRect(startX, startY, currentX - startX, currentY - startY); }
+  else if (currentMode === 'circle') { ctx.putImageData(snapshot, 0, 0); ctx.strokeStyle = colorPicker.value; ctx.beginPath(); let radius = Math.sqrt(Math.pow(currentX - startX, 2) + Math.pow(currentY - startY, 2)); ctx.arc(startX, startY, radius, 0, 2 * Math.PI); ctx.stroke(); }
 }
 
-// 離したときの処理
 function handleDrawEnd() {
-  if (currentMode === 'bucket') {
-    floodFill(startX, startY, colorPicker.value);
-  } else if (currentMode === 'text') {
+  if (currentMode === 'bucket') { floodFill(startX, startY, colorPicker.value); }
+  else if (currentMode === 'text') {
     let text = prompt("いれたい文字を入力してね：");
-    if (text) {
-      ctx.fillStyle = colorPicker.value;
-      ctx.font = `${lineWidth.value * 3}px sans-serif`;
-      ctx.fillText(text, startX, startY);
-    } else {
-      undoStack.pop(); // キャンセル時は直前の履歴を消去
-      updateHistoryButtons();
-    }
+    if (text) { ctx.fillStyle = colorPicker.value; ctx.font = `${lineWidth.value * 3}px sans-serif`; ctx.fillText(text, startX, startY); }
+    else { undoStack.pop(); updateHistoryButtons(); }
   }
   ctx.beginPath();
 }
 
-// バケツツール（シードフィルアルゴリズム）
 function floodFill(startX, startY, fillColorHex) {
-  const width = canvas.width;
-  const height = canvas.height;
+  const width = canvas.width; const height = canvas.height;
   if (startX < 0 || startX >= width || startY < 0 || startY >= height) return;
-
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const data = imageData.data;
-
-  const r = parseInt(fillColorHex.slice(1, 3), 16);
-  const g = parseInt(fillColorHex.slice(3, 5), 16);
-  const b = parseInt(fillColorHex.slice(5, 7), 16);
+  const imageData = ctx.getImageData(0, 0, width, height); const data = imageData.data;
+  const r = parseInt(fillColorHex.slice(1, 3), 16), g = parseInt(fillColorHex.slice(3, 5), 16), b = parseInt(fillColorHex.slice(5, 7), 16);
   const targetColor = [r, g, b, 255];
-
   const startPos = (startY * width + startX) * 4;
-  const startR = data[startPos];
-  const startG = data[startPos + 1];
-  const startB = data[startPos + 2];
-  const startA = data[startPos + 3];
-
-  if (startR === targetColor[0] && startG === targetColor[1] && startB === targetColor[2] && startA === targetColor[3]) {
-    return;
-  }
-
+  const startR = data[startPos], startG = data[startPos + 1], startB = data[startPos + 2], startA = data[startPos + 3];
+  if (startR === targetColor[0] && startG === targetColor[1] && startB === targetColor[2] && startA === targetColor[3]) return;
   const queue = [[startX, startY]];
-
   while (queue.length > 0) {
-    const [cx, cy] = queue.pop();
-    const pixelPos = (cy * width + cx) * 4;
-
-    if (
-      data[pixelPos] === startR &&
-      data[pixelPos + 1] === startG &&
-      data[pixelPos + 2] === startB &&
-      data[pixelPos + 3] === startA
-    ) {
-      data[pixelPos] = targetColor[0];
-      data[pixelPos + 1] = targetColor[1];
-      data[pixelPos + 2] = targetColor[2];
-      data[pixelPos + 3] = targetColor[3];
-
-      if (cx + 1 < width)  queue.push([cx + 1, cy]);
-      if (cx - 1 >= 0)     queue.push([cx - 1, cy]);
-      if (cy + 1 < height) queue.push([cx, cy + 1]);
-      if (cy - 1 >= 0)     queue.push([cx, cy - 1]);
+    const [cx, cy] = queue.pop(); const pixelPos = (cy * width + cx) * 4;
+    if (data[pixelPos] === startR && data[pixelPos + 1] === startG && data[pixelPos + 2] === startB && data[pixelPos + 3] === startA) {
+      data[pixelPos] = targetColor[0]; data[pixelPos + 1] = targetColor[1]; data[pixelPos + 2] = targetColor[2]; data[pixelPos + 3] = targetColor[3];
+      if (cx + 1 < width) queue.push([cx + 1, cy]); if (cx - 1 >= 0) queue.push([cx - 1, cy]); if (cy + 1 < height) queue.push([cx, cy + 1]); if (cy - 1 >= 0) queue.push([cx, cy - 1]);
     }
   }
   ctx.putImageData(imageData, 0, 0);
 }
 
-// 全て消す処理
-clearBtn.addEventListener('click', () => {
-  if (confirm('ぜんぶ消しちゃって大丈夫？')) {
-    saveHistory();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-});
-
-// 保存処理
-downloadBtn.addEventListener('click', () => {
-  const imageURI = canvas.toDataURL('image/png');
-  const link = document.createElement('a');
-  link.download = 'edited_picture.png';
-  link.href = imageURI;
-  link.click();
-});
+clearBtn.addEventListener('click', () => { if (confirm('ぜんぶ消しちゃって大丈夫？')) { resetTransform(); saveHistory(); ctx.clearRect(0, 0, canvas.width, canvas.height); } });
+downloadBtn.addEventListener('click', () => { resetTransform(); const imageURI = canvas.toDataURL('image/png'); const link = document.createElement('a'); link.download = 'edited_picture.png'; link.href = imageURI; link.click(); });
 </script>
 </body>
 </html>
