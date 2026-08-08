@@ -154,7 +154,6 @@ input[type="number"] { width: 35px; }
 </div>
 
 <script>
-// 次の返信で、変数定義と変形ツール用の特殊なデータ変数の定義をお送りします。
 const canvas = document.getElementById('paintCanvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const colorPicker = document.getElementById('colorPicker');
@@ -179,15 +178,15 @@ const MAX_HISTORY = 20;
 
 // 変形ツール（reshape）用の変数
 let transformState = {
-  isSelecting: false, // 範囲を選択中か
-  isTransforming: false, // 変形中（移動・拡大縮小）か
-  activeHandle: null, // 動かしている四隅のノブ ('nw', 'ne', 'se', 'sw', 'move')
-  x: 0, y: 0, w: 0, h: 0, // 選択範囲の座標とサイズ
-  selectedPixels: null, // 切り取った画像データ（一時保存用）
-  baseSnapshot: null // 切り取る前のキャンバス状態
+  isSelecting: false,
+  isTransforming: false,
+  activeHandle: null,
+  x: 0, y: 0, w: 0, h: 0,
+  selectedPixels: null,
+  baseSnapshot: null
 };
 
-const HANDLE_SIZE = 8; // 変形ノブのサイズ
+const HANDLE_SIZE = 8;
 
 function saveHistory() {
   if (undoStack.length >= MAX_HISTORY) undoStack.shift();
@@ -226,9 +225,40 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
 });
 
+// クリップボードからの貼り付け（Ctrl+V）で画像を読み込む処理
+window.addEventListener('paste', (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      const blob = items[i].getAsFile();
+      const reader = new FileReader();
+
+      reader.onload = function(event) {
+        const img = new Image();
+        img.onload = function() {
+          resetTransform();
+          saveHistory();
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+          const x = (canvas.width / 2) - (img.width / 2) * scale;
+          const y = (canvas.height / 2) - (img.height / 2) * scale;
+          ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+        };
+        img.src = event.target.result;
+      };
+
+      reader.readAsDataURL(blob);
+      break;
+    }
+  }
+});
+
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
-// 変形モードの初期化
+
 function resetTransform() {
   if (transformState.isTransforming || transformState.isSelecting) {
     ctx.putImageData(transformState.baseSnapshot, 0, 0);
@@ -237,7 +267,6 @@ function resetTransform() {
   transformState = { isSelecting: false, isTransforming: false, activeHandle: null, x: 0, y: 0, w: 0, h: 0, selectedPixels: null, baseSnapshot: null };
 }
 
-// 変形結果をキャンバスに確定描画する
 function drawTransformResult() {
   if (!transformState.selectedPixels) return;
   const tempCanvas = document.createElement('canvas');
@@ -247,7 +276,6 @@ function drawTransformResult() {
   ctx.drawImage(tempCanvas, transformState.x, transformState.y, transformState.w, transformState.h);
 }
 
-// 選択枠と四隅のノブ（ハンドル）を描画する
 function drawTransformOverlay() {
   if (!transformState.isSelecting && !transformState.isTransforming) return;
   
@@ -277,7 +305,6 @@ function drawTransformOverlay() {
   ctx.restore();
 }
 
-// 画質変更処理
 canvasSizeSelect.addEventListener('change', (e) => {
   const newSize = parseInt(e.target.value);
   const tempCanvas = document.createElement('canvas');
@@ -289,7 +316,6 @@ canvasSizeSelect.addEventListener('change', (e) => {
   undoStack = []; redoStack = []; updateHistoryButtons();
 });
 
-// モード切り替え
 buttons.forEach(btn => {
   btn.addEventListener('click', () => {
     if (currentMode === 'reshape' && btn.id !== 'reshape') resetTransform();
@@ -299,7 +325,6 @@ buttons.forEach(btn => {
   });
 });
 
-// 画像読み込み
 imageUpload.addEventListener('change', (e) => {
   const file = e.target.files; if (!file) return;
   const reader = new FileReader();
@@ -325,7 +350,7 @@ function getCanvasPos(e) {
     y: Math.floor((e.clientY - rect.top) * (canvas.height / rect.height))
   };
 }
-// クリックした位置がノブ（ハンドル）の上か判定する
+
 function getActiveHandle(x, y) {
   if (!transformState.isTransforming) return null;
   const hs = HANDLE_SIZE;
@@ -347,10 +372,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (currentMode === 'reshape') {
     const handle = getActiveHandle(pos.x, pos.y);
     if (handle) {
-      // 既存の選択範囲を動かす・引き伸ばすモード
       transformState.activeHandle = handle;
     } else {
-      // 新しく形（長方形・正方形）を囲んで選ぶモード
       if (transformState.isTransforming) {
         ctx.putImageData(transformState.baseSnapshot, 0, 0);
         drawTransformResult();
@@ -366,7 +389,6 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
-  // 通常ツール用の描画開始処理
   saveHistory();
   drawing = true;
   ctx.beginPath();
@@ -383,7 +405,6 @@ canvas.addEventListener('pointermove', (e) => {
   if (currentMode === 'reshape') {
     const ts = transformState;
     if (ts.isSelecting) {
-      // ドラッグで囲む枠を広げる（Shiftキー不要で横・縦の長方形、Shiftキー押下で正方形に自動固定）
       let dx = pos.x - startX;
       let dy = pos.y - startY;
       if (e.shiftKey) {
@@ -397,7 +418,6 @@ canvas.addEventListener('pointermove', (e) => {
       ts.h = Math.abs(dy);
       drawTransformOverlay();
     } else if (ts.isTransforming && ts.activeHandle) {
-      // ハンドルを掴んで中身を移動・引き伸ばす（伸縮）
       const dx = pos.x - startX;
       const dy = pos.y - startY;
       if (ts.activeHandle === 'move') { ts.x += dx; ts.y += dy; }
@@ -426,9 +446,7 @@ canvas.addEventListener('pointerup', (e) => {
       if (ts.w > 2 && ts.h > 2) {
         ts.isSelecting = false;
         ts.isTransforming = true;
-        // 選んだ四角形（長方形・正方形）のピクセルデータをくり抜く
         ts.selectedPixels = ctx.getImageData(ts.x, ts.y, ts.w, ts.h);
-        // 元の位置を白（背景色）でクリアする
         ctx.putImageData(ts.baseSnapshot, 0, 0);
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(ts.x, ts.y, ts.w, ts.h);
